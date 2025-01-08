@@ -79,6 +79,41 @@ sudo cp -R "$CONTAINER_IMAGE_PATH"/usr/lib/x86_64-linux-gnu/dri ./mnt/disk/usr/l
 sudo chmod a+x ./mnt/disk/usr/lib/dri/*.so
 # sudo cp -R "$CONTAINER_IMAGE_PATH"/lib/x86_64-linux-gnu/*.so* ./mnt/disk/lib/
 
+log "Copy libraries"
+NEEDED_LIBS=(
+    libLLVM-15.so.1
+    libzstd.so.1
+    libsensors.so.5
+    libdrm_radeon.so.1
+    libelf.so.1
+    libdrm_amdgpu.so.1
+    libdrm_nouveau.so.2
+    libedit.so.2
+    libtinfo.so.6
+    libbsd.so.0
+    libmd.so.0
+    libgcc_s.so.1
+    libc.so.6
+    libEGL.so.1
+    libaudit.so.1
+    libunwind.so.8
+    libselinux.so.1
+    liblzma.so.5
+    libGLdispatch.so.0
+    libepoxy.so.0
+)
+
+for lib in "${NEEDED_LIBS[@]}"; do
+    sudo cp "$CONTAINER_IMAGE_PATH"/usr/lib/x86_64-linux-gnu/"$lib" ./mnt/disk/usr/lib64/
+done
+
+sudo cp "$CONTAINER_IMAGE_PATH"/usr/lib/x86_64-linux-gnu/libstdc++.so.6 ./mnt/disk/lib/
+
+sudo cp "$CONTAINER_IMAGE_PATH"/usr/bin/Xorg ./mnt/disk/usr/bin/
+sudo cp "$CONTAINER_IMAGE_PATH"/usr/bin/X ./mnt/disk/usr/bin/
+sudo cp -R "$CONTAINER_IMAGE_PATH"/usr/lib/xorg ./mnt/disk/usr/lib/
+
+
 log "Copy scripts"
 sudo cp -R ./rootfs/root/ ./mnt/disk/
 sudo cp -R ./rootfs/home/tesla ./mnt/disk/home/
