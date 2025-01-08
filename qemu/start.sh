@@ -8,9 +8,8 @@ qemu-system-x86_64 \
    -drive format=raw,file=./out/disk.img \
    -kernel ./cache/alpine-iso/boot/vmlinuz-lts \
    -initrd ./cache/alpine-iso/boot/initramfs-lts \
-   -append "console=ttyS0 root=/dev/sda rootflags=rw init=/bin/bash earlyprintk=ttyS0 modules=ext4,virtio-gpu" \
-   -device virtio-vga \
-   -device virtio-gpu-pci \
+   -append "console=ttyS0 root=/dev/sda rootflags=rw init=/bin/bash earlyprintk=ttyS0 modules=ext4,qxl,virtio-gpu video=qxl" \
+   -vga virtio \
    -usb \
    -device usb-ehci,id=ehci \
 	-device usb-tablet \
