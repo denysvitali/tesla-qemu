@@ -4,6 +4,7 @@
 
 - Linux
 - QEMU
+- A Tesla firmware image (e.g: `./firmware/2024.20.9.mcu2` = `499b7435e36d18476647838f3d7fbac6`)
 
 ## Setup
 
@@ -12,6 +13,18 @@ sudo ip tuntap add dev tap0 mode tap
 sudo ip link set tap0 up
 sudo ip addr add 192.168.90.5/24 dev tap0
 ```
+
+
+## Build QEMU image
+
+```bash
+./build.sh firmware/2024.20.9.mcu2
+```
+
+## Build the ramdisk
+
+----- OUTDATED -----
+TODO: Update this section
 
 ## Start
 

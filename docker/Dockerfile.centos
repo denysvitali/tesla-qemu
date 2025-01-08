@@ -1,6 +1,0 @@
-FROM centos:7
-RUN yum install -y \
-	xorg-x11-drivers \
-	xorg-x11-drv-fbdev \
-	xorg-x11-drv-qxl
-

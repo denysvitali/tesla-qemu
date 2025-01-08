@@ -1,2 +1,7 @@
 *.img
 /usr
+firmware/*.mcu*
+/out
+/cache
+/mnt
+/initrd
