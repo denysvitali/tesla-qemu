@@ -101,12 +101,14 @@ NEEDED_LIBS=(
     liblzma.so.5
     libGLdispatch.so.0
     libepoxy.so.0
+    libglapi.so.0.0.0
 )
 
 for lib in "${NEEDED_LIBS[@]}"; do
     sudo cp "$CONTAINER_IMAGE_PATH"/usr/lib/x86_64-linux-gnu/"$lib" ./mnt/disk/usr/lib64/
 done
 
+sudo cp -R "$CONTAINER_IMAGE_PATH"/usr/lib/x86_64-linux-gnu ./mnt/disk/usr/lib/
 sudo cp "$CONTAINER_IMAGE_PATH"/usr/lib/x86_64-linux-gnu/libstdc++.so.6 ./mnt/disk/lib/
 
 sudo cp "$CONTAINER_IMAGE_PATH"/usr/bin/Xorg ./mnt/disk/usr/bin/
@@ -120,6 +122,28 @@ sudo cp -R ./rootfs/home/tesla ./mnt/disk/home/
 
 log "Remove Tesla Xorg config"
 sudo rm ./mnt/disk/etc/X11/xorg.conf.d/10-monitor.conf
+
+
+if [ ! -f "./cache/ssh/ssh_host_ecdsa_key" ]; then
+    log "Generate SSH host keys"
+    mkdir -p ./cache/ssh
+    ssh-keygen -t ecdsa -f ./cache/ssh/ssh_host_ecdsa_key -N ""
+    ssh-keygen -t ed25519 -f ./cache/ssh/ssh_host_ed25519 -N ""
+fi
+
+log "Copy SSH host keys"
+sudo mkdir -p ./mnt/disk/var/etc/ssh
+sudo cp ./cache/ssh/ssh_host_ecdsa_key ./mnt/disk/var/etc/ssh/ssh_host_ecdsa_key
+sudo cp ./cache/ssh/ssh_host_ed25519 ./mnt/disk/var/etc/ssh/ssh_host_ed25519
+
+log "Adding our SSH public keys"
+sudo mkdir -p ./mnt/disk/root/.ssh
+ssh-add -L | sudo tee "./mnt/disk/root/.ssh/authorized_keys"
+
+log "Add custom sshd config"
+cat << EOF | sudo tee ./mnt/disk/etc/ssh/sshd_config_qemu
+PermitRootLogin yes
+EOF
 
 log "Copy /boot to disk image"
 sudo cp -R ./cache/alpine-iso/boot ./mnt/boot
