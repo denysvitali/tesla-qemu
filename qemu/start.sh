@@ -8,15 +8,17 @@ qemu-system-x86_64 \
    -drive format=raw,file=./out/disk.img \
    -kernel ./cache/alpine-iso/boot/vmlinuz-lts \
    -initrd ./cache/alpine-iso/boot/initramfs-lts \
-   -append "console=ttyS0 root=/dev/sda rootflags=rw init=/bin/bash earlyprintk=ttyS0 modules=ext4,qxl,virtio,virtio_blk,virtio_pci,virtio_net fbmem=32M" \
-   -device virtio-vga-gl \
    -vga none \
-   -display gtk,gl=on,show-cursor=on \
+   -device virtio-gpu-pci \
+   -display gtk,gl=on \
+   -append "console=ttyS0 root=/dev/sda rootflags=rw init=/bin/bash modules=ext4,virtio,virtio_gpu,virtio_blk,virtio_pci,virtio_net,drm,drm_kms_helper" \
    -usb \
    -device usb-ehci,id=ehci \
-	-device usb-tablet \
+   -device usb-tablet \
    -serial stdio \
-	-serial pty \
+   -serial pty \
    -device virtio-net,netdev=network0 \
-	-netdev tap,id=network0,ifname=tap0,script=no,downscript=no \
+   -netdev tap,id=network0,ifname=tap0,script=no,downscript=no \
    -boot d
+
+#-append "console=ttyS0 root=/dev/sda rootflags=rw init=/bin/bash earlyprintk=ttyS0 modules=ext4,qxl,virtio,virtio_blk,virtio_pci,virtio_net fbmem=32M" \

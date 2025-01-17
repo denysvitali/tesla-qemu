@@ -2,4 +2,5 @@ FROM ubuntu:22.04
 RUN apt-get update && apt-get install -y \
     xserver-xorg-video-all \
     xserver-xorg-input-all \
-    libgl1-mesa-dri
+    libgl1-mesa-dri \
+    libvirglrenderer
