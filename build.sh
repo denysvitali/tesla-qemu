@@ -34,18 +34,6 @@ fi
 
 log "Start build"
 
-if [ ! -f "cache/ubuntu.iso" ]; then
-    log "Download Ubuntu"
-    wget -O cache/ubuntu.iso "https://releases.ubuntu.com/24.04.1/ubuntu-24.04.1-live-server-amd64.iso"
-    log "Extract ISO"
-    pushd cache
-    mkdir -p ubuntu-iso
-    pushd ubuntu-iso
-    7z x ../ubuntu.iso
-    popd
-    popd
-fi
-
 qemu-img create out/boot.img 1G
 qemu-img create out/disk.img 6G
 
@@ -103,7 +91,6 @@ NEEDED_LIBS=(
     libepoxy.so.0
     libglapi.so.0.0.0
     libvirglrenderer.so.1
-    libvirglrenderer.so
     libwayland-server.so.0
     libwayland-client.so.0
 )
@@ -136,12 +123,34 @@ sudo cp -R ./rootfs/home/tesla ./mnt/disk/home/
 log "Remove Tesla Xorg config"
 sudo rm ./mnt/disk/etc/X11/xorg.conf.d/10-monitor.conf
 
+log "Copy Xorg modesetting config"
+sudo cp ./rootfs/etc/X11/xorg.conf.d/10-modesetting.conf ./mnt/disk/etc/X11/xorg.conf.d/
+
 
 if [ ! -f "./cache/ssh/ssh_host_ecdsa_key" ]; then
     log "Generate SSH host keys"
     mkdir -p ./cache/ssh
     ssh-keygen -t ecdsa -f ./cache/ssh/ssh_host_ecdsa_key -N ""
     ssh-keygen -t ed25519 -f ./cache/ssh/ssh_host_ed25519 -N ""
+fi
+
+# Download and extract Alpine ISO boot files
+ALPINE_VERSION="3.19.1"
+ALPINE_ISO_URL="https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86_64/alpine-virt-${ALPINE_VERSION}-x86_64.iso"
+ALPINE_CACHE_DIR="./cache/alpine-iso"
+
+if [ ! -d "$ALPINE_CACHE_DIR" ]; then
+    log "Download Alpine Linux ISO"
+    mkdir -p ./cache
+    wget -O ./cache/alpine-virt.iso "$ALPINE_ISO_URL"
+
+    log "Extract Alpine boot files"
+    mkdir -p "$ALPINE_CACHE_DIR"
+    mkdir -p ./mnt/alpine-iso
+    sudo mount -o loop ./cache/alpine-virt.iso ./mnt/alpine-iso
+    sudo cp -R ./mnt/alpine-iso/* "$ALPINE_CACHE_DIR/"
+    sudo umount ./mnt/alpine-iso
+    rmdir ./mnt/alpine-iso
 fi
 
 log "Copy SSH host keys"
@@ -166,7 +175,8 @@ PermitRootLogin yes
 EOF
 
 log "Copy /boot to disk image"
-sudo cp -R ./cache/alpine-iso/boot ./mnt/boot
+sudo mkdir -p ./mnt/disk/boot
+sudo cp -R ./cache/alpine-iso/boot/* ./mnt/disk/boot/
 
 log "DONE!"
 
