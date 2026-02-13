@@ -6,14 +6,15 @@
 qemu-system-x86_64 \
    -enable-kvm -cpu host -m 512m -smp 2 \
    -drive format=raw,file=./out/disk.img \
-   -kernel ./cache/alpine-iso/boot/vmlinuz-lts \
+   -kernel ./out/bzImage \
    -initrd ./cache/alpine-iso/boot/initramfs-lts \
    -vga none \
    -device virtio-gpu-pci \
    -display gtk,gl=on \
-   -append "console=ttyS0 root=/dev/sda rootflags=rw init=/bin/bash modules=ext4,virtio,virtio_gpu,virtio_blk,virtio_pci,virtio_net,drm,drm_kms_helper" \
+   -append "console=ttyS0 root=/dev/sda rootflags=rw init=/bin/bash modules=ext4,virtio,virtio_gpu,virtio_blk,virtio_pci,virtio_net,drm,drm_kms_helper,usbhid,mousedev,uinput,uhci_hcd,hid_generic,virtio_input,hid_multitouch,i2c_hid,input_e" \
    -usb \
    -device usb-ehci,id=ehci \
+   -device usb-mouse \
    -device usb-tablet \
    -serial stdio \
    -serial pty \
