@@ -7,11 +7,12 @@ qemu-system-x86_64 \
    -enable-kvm -cpu host -m 512m -smp 2 \
    -drive id=hd0,format=raw,file=./out/disk.img,if=none \
    -device virtio-blk-pci,drive=hd0 \
-   -kernel ./cache/alpine-iso/boot/vmlinuz-virt \
-   -initrd ./cache/alpine-iso/boot/initramfs-virt \
-   -vga std \
-   -display gtk \
-   -append "console=ttyS0 root=/dev/vda rootflags=rw init=/bin/bash modules=ext4,virtio,virtio_gpu,virtio_blk,virtio_pci,virtio_net,drm,drm_kms_helper,usbhid,mousedev,uinput,uhci_hcd,hid_generic,virtio_input,hid_multitouch,i2c_hid,input_e" \
+   -kernel ./cache/alpine-iso/boot/vmlinuz-lts \
+   -initrd ./cache/alpine-iso/boot/initramfs-lts \
+   -vga none \
+   -device virtio-gpu-pci,edid=on,xres=1920,yres=1080 \
+   -display gtk,gl=on,zoom-to-fit=on \
+   -append "console=ttyS0 root=/dev/vda rootflags=rw init=/bin/bash modules=ext4,virtio,virtio_gpu,virtio_blk,virtio_pci,virtio_net,drm,drm_kms_helper,usbhid,mousedev,uinput,uhci_hcd,hid_generic,virtio_input,hid_multitouch,i2c_hid,input_e video=1920x1080" \
    -usb \
    -device usb-ehci,id=ehci \
    -device usb-mouse \

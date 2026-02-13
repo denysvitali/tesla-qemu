@@ -136,18 +136,18 @@ fi
 
 # Download and extract Alpine ISO boot files
 ALPINE_VERSION="3.19.1"
-ALPINE_ISO_URL="https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86_64/alpine-virt-${ALPINE_VERSION}-x86_64.iso"
+ALPINE_ISO_URL="https://dl-cdn.alpinelinux.org/alpine/v3.19/releases/x86_64/alpine-standard-${ALPINE_VERSION}-x86_64.iso"
 ALPINE_CACHE_DIR="./cache/alpine-iso"
 
 if [ ! -d "$ALPINE_CACHE_DIR" ]; then
     log "Download Alpine Linux ISO"
     mkdir -p ./cache
-    wget -O ./cache/alpine-virt.iso "$ALPINE_ISO_URL"
+    wget -O ./cache/alpine-standard.iso "$ALPINE_ISO_URL"
 
     log "Extract Alpine boot files"
     mkdir -p "$ALPINE_CACHE_DIR"
     mkdir -p ./mnt/alpine-iso
-    sudo mount -o loop ./cache/alpine-virt.iso ./mnt/alpine-iso
+    sudo mount -o loop ./cache/alpine-standard.iso ./mnt/alpine-iso
     sudo cp -R ./mnt/alpine-iso/* "$ALPINE_CACHE_DIR/"
     sudo umount ./mnt/alpine-iso
     rmdir ./mnt/alpine-iso
