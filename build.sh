@@ -52,7 +52,7 @@ sudo mount ./out/disk.img ./mnt/disk
 sudo mount -t squashfs "$INPUT_FILE" ./mnt/squashfs
 
 log "Copy files to disk image"
-sudo cp -R ./mnt/squashfs/* ./mnt/disk
+sudo cp -R ./mnt/squashfs/* ./mnt/disk || true
 
 if [ ! -d "$CONTAINER_IMAGE_PATH" ]; then
     log "Build X11 docker image"
@@ -64,43 +64,73 @@ sudo cp -R "$CONTAINER_IMAGE_PATH"/usr/lib/xorg/modules ./mnt/disk/usr/lib/xorg/
 sudo chmod a+x ./mnt/disk/usr/lib/xorg/modules/drivers/*.so
 sudo cp -R "$CONTAINER_IMAGE_PATH"/usr/lib/x86_64-linux-gnu/dri ./mnt/disk/usr/lib/
 sudo chmod a+x ./mnt/disk/usr/lib/dri/*.so
-# sudo cp -R "$CONTAINER_IMAGE_PATH"/lib/x86_64-linux-gnu/*.so* ./mnt/disk/lib/
 
-log "Copy libraries"
-NEEDED_LIBS=(
+log "Copy Mesa/GL libraries"
+# These libraries are needed for Xorg glamor, EGL, and OpenGL ES 2 (QtCar).
+# Use cp -L to follow symlinks and get real files. Install into /usr/lib/ so
+# both Xorg modules and applications find them without LD_LIBRARY_PATH hacks.
+#
+# Glamor in Xorg uses dlopen("libgbm.so.1") at runtime. If ANY transitive
+# dependency of libgbm is missing, the dlopen fails silently and glamor is
+# disabled entirely (no glamor lines in Xorg.log). We must provide the full
+# dependency tree.
+MESA_LIBS=(
+    # --- Mesa DRI / GL core ---
     libLLVM-15.so.1
-    libzstd.so.1
-    libsensors.so.5
+    libglapi.so.0
+    libvirglrenderer.so.1
+    libEGL.so.1
+    libEGL_mesa.so.0
+    libGLdispatch.so.0
+    libGLESv2.so.2
+    libGL.so.1
+    libGLX.so.0
+    libGLX_mesa.so.0
+    libepoxy.so.0
+    # --- GBM + DRM (glamor dlopen chain) ---
+    libgbm.so.1
+    libdrm.so.2
     libdrm_radeon.so.1
-    libelf.so.1
     libdrm_amdgpu.so.1
     libdrm_nouveau.so.2
+    # --- libgbm transitive deps ---
+    libexpat.so.1
+    libffi.so.8
+    libwayland-server.so.0
+    libwayland-client.so.0
+    # --- Xorg binary runtime deps ---
+    libudev.so.1
+    libsystemd.so.0
+    libpciaccess.so.0
+    libpixman-1.so.0
+    libxcvt.so.0
+    libXfont2.so.2
+    libxshmfence.so.1
+    libdbus-1.so.3
+    libgcrypt.so.20
+    # --- Transitive deps of above ---
+    libelf.so.1
+    libzstd.so.1
+    libsensors.so.5
     libedit.so.2
     libtinfo.so.6
     libbsd.so.0
     libmd.so.0
-    libgcc_s.so.1
-    libc.so.6
-    libEGL.so.1
-    libEGL_mesa.so.0
     libaudit.so.1
     libunwind.so.8
     libselinux.so.1
     liblzma.so.5
-    libGLdispatch.so.0
-    libepoxy.so.0
-    libglapi.so.0.0.0
-    libvirglrenderer.so.1
-    libwayland-server.so.0
-    libwayland-client.so.0
 )
 
-for lib in "${NEEDED_LIBS[@]}"; do
-    sudo cp "$CONTAINER_IMAGE_PATH"/usr/lib/x86_64-linux-gnu/"$lib" ./mnt/disk/usr/lib64/
+SRC="$CONTAINER_IMAGE_PATH/usr/lib/x86_64-linux-gnu"
+for lib in "${MESA_LIBS[@]}"; do
+    # -L follows symlinks so we always get the real file
+    sudo cp -L "$SRC/$lib" "./mnt/disk/usr/lib/$lib"
 done
 
-sudo cp -R "$CONTAINER_IMAGE_PATH"/usr/lib/x86_64-linux-gnu ./mnt/disk/usr/lib/
-sudo cp "$CONTAINER_IMAGE_PATH"/usr/lib/x86_64-linux-gnu/libstdc++.so.6 ./mnt/disk/lib/
+log "Create DRI symlink for Ubuntu Xorg modules"
+sudo mkdir -p ./mnt/disk/usr/lib/x86_64-linux-gnu
+sudo ln -sf /usr/lib/dri ./mnt/disk/usr/lib/x86_64-linux-gnu/dri
 
 sudo cp "$CONTAINER_IMAGE_PATH"/usr/bin/Xorg ./mnt/disk/usr/bin/
 sudo cp "$CONTAINER_IMAGE_PATH"/usr/bin/X ./mnt/disk/usr/bin/

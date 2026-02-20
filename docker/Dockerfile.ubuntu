@@ -3,4 +3,5 @@ RUN apt-get update && apt-get install -y \
     xserver-xorg-video-all \
     xserver-xorg-input-all \
     libgl1-mesa-dri \
+    libgles2-mesa \
     libvirglrenderer1

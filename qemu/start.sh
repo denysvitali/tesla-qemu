@@ -10,9 +10,9 @@ qemu-system-x86_64 \
    -kernel ./cache/alpine-iso/boot/vmlinuz-lts \
    -initrd ./cache/alpine-iso/boot/initramfs-lts \
    -vga none \
-   -device virtio-gpu-pci,edid=on,xres=1920,yres=1080 \
+   -device virtio-gpu-gl-pci,edid=on,xres=1200,yres=1920 \
    -display gtk,gl=on,zoom-to-fit=on \
-   -append "console=ttyS0 root=/dev/vda rootflags=rw init=/bin/bash modules=ext4,virtio,virtio_gpu,virtio_blk,virtio_pci,virtio_net,drm,drm_kms_helper,usbhid,mousedev,uinput,uhci_hcd,hid_generic,virtio_input,hid_multitouch,i2c_hid,input_e video=1920x1080" \
+   -append "console=ttyS0 root=/dev/vda rootflags=rw init=/bin/bash modules=loop,squashfs,ext4,virtio,virtio_gpu,virtio_blk,virtio_pci,virtio_net,drm,drm_kms_helper,usbhid,mousedev,uinput,uhci_hcd,hid_generic,virtio_input,hid_multitouch,i2c_hid,input_e video=1200x1920" \
    -usb \
    -device usb-ehci,id=ehci \
    -device usb-mouse \
