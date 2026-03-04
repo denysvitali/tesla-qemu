@@ -146,6 +146,81 @@ cat << EOF | sudo tee ./mnt/disk/usr/share/glvnd/egl_vendor.d/50_mesa.json
 EOF
 
 
+log "Compile touch-proxy"
+gcc -static -o out/touch-proxy tools/touch-proxy.c
+
+log "Copy touch-proxy"
+sudo cp out/touch-proxy ./mnt/disk/usr/local/bin/touch-proxy
+sudo chmod a+x ./mnt/disk/usr/local/bin/touch-proxy
+
+log "Compile x11-input-proxy (dynamically linked, runs inside VM)"
+docker run --rm \
+    -v "$(pwd)/tools:/src:ro" \
+    -v "$(pwd)/out:/out" \
+    ubuntu:22.04 bash -c "
+        apt-get update -qq && apt-get install -y -qq gcc libx11-dev libxtst-dev >/dev/null 2>&1 &&
+        gcc -O2 -o /out/x11-input-proxy /src/x11-input-proxy.c -lX11 -lXtst
+    "
+
+log "Copy x11-input-proxy"
+sudo cp out/x11-input-proxy ./mnt/disk/usr/local/bin/x11-input-proxy
+sudo chmod a+x ./mnt/disk/usr/local/bin/x11-input-proxy
+
+log "Patch libQtCarUIFramework.so for touch input in QEMU"
+# Four patches to libQtCarUIFramework.so (firmware 2026.2.3):
+#
+# 1. NOP the conditional jump in DisplayDevice constructor that skips
+#    loading the touch driver based on a display-type flag (this->0xd70).
+#    At 0x7faf99: "jne 0x7fb991" (0f 85 f2 09 00 00) → 6x NOP
+#
+# 2. Fix NULL theTouchDevice crash: the constructor reads theTouchDevice
+#    (a BSS global, zero-initialized) and calls loadTouchDriver on it.
+#    Since getInstance() hasn't been called yet, theTouchDevice is NULL,
+#    causing a segfault at loadTouchDriver+0x17 (deref NULL+0xfa8).
+#    Fix: replace the theTouchDevice load (17 bytes at 0x7fafc8) with a
+#    call to TouchDevice::getInstance(DisplayDevice*) via PLT, which
+#    creates and caches a valid TouchDevice object.
+#    New code: mov %r12,%rdi; call getInstance@plt; xchg %rax,%rbx; <adjusted rip-rel load>
+#
+# 3. Patch isPowered() to always return true (bypasses POWER_touchState).
+#    At 0xa45c90: → mov eax,1; ret (b8 01 00 00 00 c3)
+#
+# 4. Patch isDisplayOn() to always return true.
+#    At 0xa45a60: → mov eax,1; ret (b8 01 00 00 00 c3)
+TOUCH_LIB="./mnt/disk/usr/tesla/UI/lib/libQtCarUIFramework.so"
+sudo python3 -c "
+patches = [
+    (0x7faf99, b'\x90\x90\x90\x90\x90\x90', 'NOP touch-skip jump in DisplayDevice ctor'),
+    (0x7fafc8, b'\x49\x89\xe7\xe8\xc0\xec\xc6\xff\x48\x93\x48\x8b\x3d\xcf\xd1\x6a\x00', 'call getInstance before loadTouchDriver'),
+    (0xa45c90, b'\xb8\x01\x00\x00\x00\xc3', 'isPowered() -> return true'),
+    (0xa45a60, b'\xb8\x01\x00\x00\x00\xc3', 'isDisplayOn() -> return true'),
+]
+with open('$TOUCH_LIB', 'r+b') as f:
+    for offset, patch, desc in patches:
+        f.seek(offset)
+        orig = f.read(len(patch))
+        f.seek(offset)
+        f.write(patch)
+        print(f'  {offset:#x}: {orig.hex()} -> {patch.hex()}  ({desc})')
+"
+
+log "Copy input libraries (needed by Xorg libinput driver)"
+INPUT_LIBS=(
+    libinput.so.10
+    libevdev.so.2
+    libmtdev.so.1
+    libwacom.so.9
+)
+for lib in "${INPUT_LIBS[@]}"; do
+    if [ -f "$SRC/$lib" ]; then
+        sudo cp -L "$SRC/$lib" "./mnt/disk/usr/lib/$lib"
+    fi
+done
+
+log "Copy libwacom data (needed by libinput)"
+sudo mkdir -p ./mnt/disk/usr/share/libwacom
+sudo cp -R "$CONTAINER_IMAGE_PATH"/usr/share/libwacom/* ./mnt/disk/usr/share/libwacom/
+
 log "Copy scripts"
 sudo cp -R ./rootfs/root/ ./mnt/disk/
 sudo cp -R ./rootfs/home/tesla ./mnt/disk/home/
@@ -155,6 +230,9 @@ sudo rm ./mnt/disk/etc/X11/xorg.conf.d/10-monitor.conf
 
 log "Copy Xorg modesetting config"
 sudo cp ./rootfs/etc/X11/xorg.conf.d/10-modesetting.conf ./mnt/disk/etc/X11/xorg.conf.d/
+
+log "Copy Xorg input config"
+sudo cp ./rootfs/etc/X11/xorg.conf.d/20-input.conf ./mnt/disk/etc/X11/xorg.conf.d/
 
 
 if [ ! -f "./cache/ssh/ssh_host_ecdsa_key" ]; then

@@ -15,7 +15,7 @@ mkdir -p /opt/games/run/i2v
 cd /usr/tesla/UI/bin || exit
 while true; do
     echo "[start.sh] Starting QtCar..."
-    ./QtCar "$@"
+    ./QtCar --touch /dev/input/touch "$@"
     EXIT_CODE=$?
     # Exit code 137 = killed by signal (SIGKILL), 143 = SIGTERM
     if [ $EXIT_CODE -eq 137 ] || [ $EXIT_CODE -eq 143 ]; then
