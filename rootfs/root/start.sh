@@ -32,7 +32,7 @@ modprobe hid_generic
 # Load evdev (creates /dev/input/eventN device nodes for input devices)
 modprobe evdev
 
-# Load uinput (needed for touch-proxy to create virtual input devices)
+# Load uinput (needed for touch-proxy to create virtual multitouch device)
 modprobe uinput
 
 # Create /dev/input/ device nodes from sysfs.
@@ -82,40 +82,45 @@ if [ -n "$KBD_DEV" ]; then
     echo "Xorg input: keyboard=$KBD_DEV"
 fi
 
+# Start x11-input-proxy: translates usb-tablet events into both X11 clicks
+# and a uinput multitouch device for QtCar's TouchDriver.
+/usr/local/bin/x11-input-proxy &
+
+# Wait for x11-input-proxy to create its "Tesla Touch Proxy" uinput device (up to 5s),
+# then expose it as /dev/input/touch for QtCar's --touch argument.
+for _i in 1 2 3 4 5; do
+    for _name in /sys/devices/virtual/input/input*/name; do
+        [ -f "$_name" ] || continue
+        if grep -q "Tesla Touch Proxy" "$_name"; then
+            _input_dir=$(dirname "$_name")
+            for _ev in "$_input_dir"/event*; do
+                [ -d "$_ev" ] || continue
+                _evname=$(basename "$_ev")
+                if [ ! -e "/dev/input/$_evname" ] && [ -f "$_ev/dev" ]; then
+                    IFS=: read -r _maj _min < "$_ev/dev"
+                    mknod "/dev/input/$_evname" c "$_maj" "$_min" 2>/dev/null
+                fi
+                chmod 666 "/dev/input/$_evname"
+                ln -sf "/dev/input/$_evname" /dev/input/touch
+                echo "touch: /dev/input/touch -> /dev/input/$_evname"
+                break 3
+            done
+        fi
+    done
+    echo "touch: waiting for x11-input-proxy device... ($_i/5)"
+    sleep 1
+done
+if [ ! -e /dev/input/touch ]; then
+    echo "touch: ERROR - x11-input-proxy device not found, /dev/input/touch missing"
+fi
+
 /usr/bin/Xorg &
 export DISPLAY=:0
 
 # Wait for X to start
 sleep 2
 
-# Set resolution to 1080x1920 (portrait, Tesla center display)
-xrandr -s 1200x1920
-
-# Start x11-input-proxy: reads QEMU usb-tablet events, injects them into
-# X11 via XTest (bypasses Xorg input driver issues), and creates a uinput
-# multitouch device for QtCar's TouchDriver at /dev/input/touch.
-/usr/local/bin/x11-input-proxy &
-sleep 1
-
-# Create the device node for the uinput device x11-input-proxy just made,
-# then symlink it to /dev/input/touch for QtCar's TouchDriver.
-for evdev in /sys/devices/virtual/input/input*/name; do
-    if grep -q "Tesla Touch Proxy" "$evdev" 2>/dev/null; then
-        INPUT_DIR=$(dirname "$evdev")
-        for ev in "$INPUT_DIR"/event*; do
-            [ -d "$ev" ] || continue
-            EVENT_NAME=$(basename "$ev")
-            if [ ! -e "/dev/input/$EVENT_NAME" ] && [ -f "$ev/dev" ]; then
-                IFS=: read -r major minor < "$ev/dev"
-                mknod "/dev/input/$EVENT_NAME" c "$major" "$minor" 2>/dev/null
-            fi
-            chmod 666 "/dev/input/$EVENT_NAME"
-            ln -sf "/dev/input/$EVENT_NAME" /dev/input/touch
-            echo "touch-proxy: created /dev/input/touch -> /dev/input/$EVENT_NAME"
-            break
-        done
-        break
-    fi
-done
+# Set resolution to 1920x1200 (Model 3 native)
+xrandr -s 1920x1200
 
 /usr/sbin/sshd -f /etc/ssh/sshd_config_qemu &

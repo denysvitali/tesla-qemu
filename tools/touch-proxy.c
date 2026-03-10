@@ -3,7 +3,10 @@
  * that QtCar's TouchDriver expects.
  *
  * QEMU usb-tablet provides: BTN_LEFT + ABS_X/ABS_Y
- * QtCar expects:            BTN_TOUCH + ABS_MT_POSITION_X/Y (multitouch)
+ * QtCar expects:            EV_ABS only, MT type-B protocol:
+ *   Down: SLOT=0, TRACKING_ID=N, POSITION_X=x, POSITION_Y=y, SYN_REPORT
+ *   Move: SLOT=0, POSITION_X=x, POSITION_Y=y, SYN_REPORT
+ *   Up:   SLOT=0, TRACKING_ID=-1, SYN_REPORT
  *
  * This program:
  *  1. Auto-detects the QEMU input device by scanning /dev/input/event*
@@ -118,15 +121,15 @@ static int create_uinput_device(void)
         return -1;
     }
 
-    /* Enable event types */
-    ioctl(fd, UI_SET_EVBIT, EV_KEY);
+    /* Mark as direct-touch device (touchscreen, not trackpad).
+     * Without INPUT_PROP_DIRECT many touch drivers ignore the device. */
+    ioctl(fd, UI_SET_PROPBIT, INPUT_PROP_DIRECT);
+
+    /* Enable event types — EV_ABS only (parseData() ignores EV_KEY) */
     ioctl(fd, UI_SET_EVBIT, EV_ABS);
     ioctl(fd, UI_SET_EVBIT, EV_SYN);
 
-    /* Enable BTN_TOUCH */
-    ioctl(fd, UI_SET_KEYBIT, BTN_TOUCH);
-
-    /* Setup absolute axes */
+    /* Setup absolute axes for MT type-B protocol */
     /* ABS_MT_SLOT */
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_MT_SLOT;
@@ -151,19 +154,6 @@ static int create_uinput_device(void)
     /* ABS_MT_POSITION_Y */
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_MT_POSITION_Y;
-    abs_setup.absinfo.minimum = 0;
-    abs_setup.absinfo.maximum = TOUCH_Y_MAX;
-    ioctl(fd, UI_ABS_SETUP, &abs_setup);
-
-    /* ABS_X / ABS_Y (single-touch, some drivers also read these) */
-    memset(&abs_setup, 0, sizeof(abs_setup));
-    abs_setup.code = ABS_X;
-    abs_setup.absinfo.minimum = 0;
-    abs_setup.absinfo.maximum = TOUCH_X_MAX;
-    ioctl(fd, UI_ABS_SETUP, &abs_setup);
-
-    memset(&abs_setup, 0, sizeof(abs_setup));
-    abs_setup.code = ABS_Y;
     abs_setup.absinfo.minimum = 0;
     abs_setup.absinfo.maximum = TOUCH_Y_MAX;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
@@ -214,6 +204,7 @@ int main(void)
     int tracking_id = 0;
     int touch_active = 0;
     int cur_x = 0, cur_y = 0;
+    int x_dirty = 0, y_dirty = 0;
 
     in_fd = find_tablet_device();
     if (in_fd < 0) {
@@ -238,20 +229,21 @@ int main(void)
         case EV_KEY:
             if (ev.code == BTN_LEFT || ev.code == BTN_TOUCH) {
                 if (ev.value && !touch_active) {
-                    /* Touch down */
+                    /* Touch down: SLOT=0, TRACKING_ID=N, POSITION_X, POSITION_Y */
                     touch_active = 1;
+                    x_dirty = 0;
+                    y_dirty = 0;
                     emit(out_fd, EV_ABS, ABS_MT_SLOT, 0);
                     emit(out_fd, EV_ABS, ABS_MT_TRACKING_ID, tracking_id++);
                     emit(out_fd, EV_ABS, ABS_MT_POSITION_X, cur_x);
                     emit(out_fd, EV_ABS, ABS_MT_POSITION_Y, cur_y);
-                    emit(out_fd, EV_ABS, ABS_X, cur_x);
-                    emit(out_fd, EV_ABS, ABS_Y, cur_y);
-                    emit(out_fd, EV_KEY, BTN_TOUCH, 1);
                 } else if (!ev.value && touch_active) {
-                    /* Touch up */
+                    /* Touch up: SLOT=0, TRACKING_ID=-1 */
                     touch_active = 0;
+                    x_dirty = 0;
+                    y_dirty = 0;
+                    emit(out_fd, EV_ABS, ABS_MT_SLOT, 0);
                     emit(out_fd, EV_ABS, ABS_MT_TRACKING_ID, -1);
-                    emit(out_fd, EV_KEY, BTN_TOUCH, 0);
                 }
             }
             break;
@@ -259,22 +251,27 @@ int main(void)
         case EV_ABS:
             if (ev.code == ABS_X) {
                 cur_x = scale(ev.value, TABLET_MAX, TOUCH_X_MAX);
-                if (touch_active) {
-                    emit(out_fd, EV_ABS, ABS_MT_POSITION_X, cur_x);
-                    emit(out_fd, EV_ABS, ABS_X, cur_x);
-                }
+                if (touch_active)
+                    x_dirty = 1;
             } else if (ev.code == ABS_Y) {
                 cur_y = scale(ev.value, TABLET_MAX, TOUCH_Y_MAX);
-                if (touch_active) {
-                    emit(out_fd, EV_ABS, ABS_MT_POSITION_Y, cur_y);
-                    emit(out_fd, EV_ABS, ABS_Y, cur_y);
-                }
+                if (touch_active)
+                    y_dirty = 1;
             }
             break;
 
         case EV_SYN:
-            if (ev.code == SYN_REPORT)
+            if (ev.code == SYN_REPORT) {
+                if (touch_active && (x_dirty || y_dirty)) {
+                    /* Move: SLOT=0, POSITION_X, POSITION_Y, SYN_REPORT */
+                    emit(out_fd, EV_ABS, ABS_MT_SLOT, 0);
+                    emit(out_fd, EV_ABS, ABS_MT_POSITION_X, cur_x);
+                    emit(out_fd, EV_ABS, ABS_MT_POSITION_Y, cur_y);
+                    x_dirty = 0;
+                    y_dirty = 0;
+                }
                 emit(out_fd, EV_SYN, SYN_REPORT, 0);
+            }
             break;
         }
     }

@@ -2,7 +2,7 @@
 
 export DISPLAY=:0
 export LD_LIBRARY_PATH=/usr/tesla/UI/lib:/lib
-export MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu
+export MESA_LOADER_DRIVER_OVERRIDE=virtio_gpu_dri
 export EGL_PLATFORM=x11
 export LIBGL_DRIVERS_PATH=/usr/lib/dri
 
@@ -15,7 +15,7 @@ mkdir -p /opt/games/run/i2v
 cd /usr/tesla/UI/bin || exit
 while true; do
     echo "[start.sh] Starting QtCar..."
-    ./QtCar --touch /dev/input/touch "$@"
+    ./QtCar --touch evdev:/dev/input/touch,rt:1 "$@"
     EXIT_CODE=$?
     # Exit code 137 = killed by signal (SIGKILL), 143 = SIGTERM
     if [ $EXIT_CODE -eq 137 ] || [ $EXIT_CODE -eq 143 ]; then

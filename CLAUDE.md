@@ -61,6 +61,7 @@ QEMU (KVM, 512MB RAM, 2 CPUs)
 
 ### VM Configuration
 
+- **RAM**: 2GB (QtCar needs ~350MB+ RSS and grows; 512m causes OOM kills)
 - **Display**: VirtIO GPU with GTK frontend, OpenGL enabled
 - **Network**: Tap interface (tap0), VM IP: 192.168.90.100
 - **Input**: USB mouse/tablet devices

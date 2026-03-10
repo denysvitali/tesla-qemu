@@ -146,19 +146,20 @@ cat << EOF | sudo tee ./mnt/disk/usr/share/glvnd/egl_vendor.d/50_mesa.json
 EOF
 
 
-log "Compile touch-proxy"
+log "Compile touch-proxy (static, translates usb-tablet ABS to ABS_MT multitouch)"
 gcc -static -o out/touch-proxy tools/touch-proxy.c
 
 log "Copy touch-proxy"
 sudo cp out/touch-proxy ./mnt/disk/usr/local/bin/touch-proxy
 sudo chmod a+x ./mnt/disk/usr/local/bin/touch-proxy
 
-log "Compile x11-input-proxy (dynamically linked, runs inside VM)"
+log "Compile x11-input-proxy (injects X11 clicks and creates uinput touch)"
 docker run --rm \
     -v "$(pwd)/tools:/src:ro" \
     -v "$(pwd)/out:/out" \
     ubuntu:22.04 bash -c "
-        apt-get update -qq && apt-get install -y -qq gcc libx11-dev libxtst-dev >/dev/null 2>&1 &&
+        apt-get update -qq &&
+        apt-get install -y -qq gcc libx11-dev libxtst-dev linux-libc-dev >/dev/null 2>&1 &&
         gcc -O2 -o /out/x11-input-proxy /src/x11-input-proxy.c -lX11 -lXtst
     "
 
@@ -166,36 +167,71 @@ log "Copy x11-input-proxy"
 sudo cp out/x11-input-proxy ./mnt/disk/usr/local/bin/x11-input-proxy
 sudo chmod a+x ./mnt/disk/usr/local/bin/x11-input-proxy
 
+log "Compile vblank-fix LD_PRELOAD shim (intercepts DRM_IOCTL_WAIT_VBLANK)"
+docker run --rm \
+    -v "$(pwd)/tools:/src:ro" \
+    -v "$(pwd)/out:/out" \
+    ubuntu:22.04 bash -c "
+        apt-get update -qq && apt-get install -y -qq gcc >/dev/null 2>&1 &&
+        gcc -O2 -shared -fPIC -o /out/vblank-fix.so /src/vblank-fix.c -lc
+    "
+
+log "Copy vblank-fix.so"
+sudo mkdir -p ./mnt/disk/usr/local/lib
+sudo cp out/vblank-fix.so ./mnt/disk/usr/local/lib/vblank-fix.so
+
 log "Patch libQtCarUIFramework.so for touch input in QEMU"
-# Four patches to libQtCarUIFramework.so (firmware 2026.2.3):
+# Four patches to libQtCarUIFramework.so (Model 3 ICE, firmware 2026.2.3):
 #
 # 1. NOP the conditional jump in DisplayDevice constructor that skips
 #    loading the touch driver based on a display-type flag (this->0xd70).
-#    At 0x7faf99: "jne 0x7fb991" (0f 85 f2 09 00 00) → 6x NOP
+#    At 0x89cef9: "jne 0x89d8f1" (0f 85 f2 09 00 00) → 6x NOP
 #
 # 2. Fix NULL theTouchDevice crash: the constructor reads theTouchDevice
 #    (a BSS global, zero-initialized) and calls loadTouchDriver on it.
 #    Since getInstance() hasn't been called yet, theTouchDevice is NULL,
 #    causing a segfault at loadTouchDriver+0x17 (deref NULL+0xfa8).
-#    Fix: replace the theTouchDevice load (17 bytes at 0x7fafc8) with a
+#    Fix: replace the theTouchDevice load (17 bytes at 0x89cf28) with a
 #    call to TouchDevice::getInstance(DisplayDevice*) via PLT, which
 #    creates and caches a valid TouchDevice object.
-#    New code: mov %r12,%rdi; call getInstance@plt; xchg %rax,%rbx; <adjusted rip-rel load>
+#    New code: mov %r12,%rdi; call getInstance@plt; xchg %rax,%rbx; mov rdi,[rip+off]
+#    getInstance@plt = 0x4e43e0, call offset from 0x89cf30 = 0xffc474b0
+#    HighPrecisionTouch rip-rel from 0x89cf39 = 0x74db87 (target 0xfeaac0)
 #
-# 3. Patch isPowered() to always return true (bypasses POWER_touchState).
-#    At 0xa45c90: → mov eax,1; ret (b8 01 00 00 00 c3)
+# 3. Patch ManagedQtCarTouchDriver::isPowered() to always return true.
+#    At 0xaee050: → mov eax,1; ret (b8 01 00 00 00 c3)
 #
-# 4. Patch isDisplayOn() to always return true.
-#    At 0xa45a60: → mov eax,1; ret (b8 01 00 00 00 c3)
+# 4. Patch ManagedQtCarTouchDriver::isDisplayOn() to always return true.
+#    At 0xaede20: → mov eax,1; ret (b8 01 00 00 00 c3)
 TOUCH_LIB="./mnt/disk/usr/tesla/UI/lib/libQtCarUIFramework.so"
 sudo python3 -c "
 patches = [
-    (0x7faf99, b'\x90\x90\x90\x90\x90\x90', 'NOP touch-skip jump in DisplayDevice ctor'),
-    (0x7fafc8, b'\x49\x89\xe7\xe8\xc0\xec\xc6\xff\x48\x93\x48\x8b\x3d\xcf\xd1\x6a\x00', 'call getInstance before loadTouchDriver'),
-    (0xa45c90, b'\xb8\x01\x00\x00\x00\xc3', 'isPowered() -> return true'),
-    (0xa45a60, b'\xb8\x01\x00\x00\x00\xc3', 'isDisplayOn() -> return true'),
+    (0x89cef9, b'\x90\x90\x90\x90\x90\x90', 'NOP touch-skip jump in DisplayDevice ctor'),
+    (0x89cf28, b'\x4c\x89\xe7\xe8\xb0\x74\xc4\xff\x48\x93\x48\x8b\x3d\x87\xdb\x74\x00', 'call getInstance before loadTouchDriver'),
+    (0xaee050, b'\xb8\x01\x00\x00\x00\xc3', 'ManagedQtCarTouchDriver::isPowered() -> return true'),
+    (0xaede20, b'\xb8\x01\x00\x00\x00\xc3', 'ManagedQtCarTouchDriver::isDisplayOn() -> return true'),
 ]
 with open('$TOUCH_LIB', 'r+b') as f:
+    for offset, patch, desc in patches:
+        f.seek(offset)
+        orig = f.read(len(patch))
+        f.seek(offset)
+        f.write(patch)
+        print(f'  {offset:#x}: {orig.hex()} -> {patch.hex()}  ({desc})')
+"
+
+log "Patch libdrm.so.2: drmWaitVBlank -> return 0 (VirtIO GPU has no vblank)"
+# VirtIO GPU doesn't implement DRM_IOCTL_WAIT_VBLANK; every call returns ENOTSUP.
+# QtCar gates frame presentation on a successful vblank wait, so the screen
+# stays black.  Patch drmWaitVBlank (file offset 0x97e0, .text VMA == file
+# offset for this lib) to xor eax,eax / ret immediately after endbr64.
+#   0x97e4: 31 c0 c3  (xor eax,eax; ret)
+LIBDRM="./mnt/disk/usr/lib/libdrm.so.2"
+sudo python3 -c "
+patches = [
+    (0x97e4, b'\x31\xc0\xc3', 'drmWaitVBlank -> xor eax,eax; ret'),
+]
+with open('$LIBDRM', 'r+b') as f:
     for offset, patch, desc in patches:
         f.seek(offset)
         orig = f.read(len(patch))

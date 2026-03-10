@@ -105,8 +105,8 @@ static int find_tablet_device(void)
 
 /* --- uinput touchscreen (for QtCar TouchDriver) --- */
 
-#define TOUCH_X_MAX 1200
-#define TOUCH_Y_MAX 1920
+#define TOUCH_X_MAX 1920
+#define TOUCH_Y_MAX 1200
 
 static int create_uinput_device(void)
 {

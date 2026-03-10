@@ -4,15 +4,15 @@
 # https://qemu-project.gitlab.io/qemu/system/linuxboot.html
 
 qemu-system-x86_64 \
-   -enable-kvm -cpu host -m 512m -smp 2 \
+   -enable-kvm -cpu host -m 2g -smp 2 \
    -drive id=hd0,format=raw,file=./out/disk.img,if=none \
    -device virtio-blk-pci,drive=hd0 \
    -kernel ./cache/alpine-iso/boot/vmlinuz-lts \
    -initrd ./cache/alpine-iso/boot/initramfs-lts \
    -vga none \
-   -device virtio-gpu-gl-pci,edid=on,xres=1200,yres=1920 \
+   -device virtio-gpu-gl-pci,edid=on,xres=1920,yres=1200 \
    -display gtk,gl=on \
-   -append "console=ttyS0 root=/dev/vda rootflags=rw init=/bin/bash modules=loop,squashfs,ext4,virtio,virtio_gpu,virtio_blk,virtio_pci,virtio_net,drm,drm_kms_helper,usbhid,mousedev,uinput,uhci_hcd,hid_generic,virtio_input,hid_multitouch,i2c_hid,input_e video=1200x1920 psi=1" \
+   -append "console=ttyS0 root=/dev/vda rootflags=rw init=/bin/bash modules=loop,squashfs,ext4,virtio,virtio_gpu,virtio_blk,virtio_pci,virtio_net,drm,drm_kms_helper,usbhid,mousedev,uinput,uhci_hcd,hid_generic,virtio_input,hid_multitouch,i2c_hid,input_e video=1920x1200 psi=1" \
    -usb \
    -device usb-ehci,id=ehci \
    -device usb-tablet \
