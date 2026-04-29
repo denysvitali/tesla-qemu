@@ -1,6 +1,6 @@
 *.img
 /usr
-firmware/*.mcu*
+/firmware
 /out
 /cache
 /mnt

@@ -15,6 +15,67 @@ mount -t devtmpfs devtmpfs /dev 2>/dev/null
 mkdir -p /dev/pts /dev/shm
 mount -t devpts devpts /dev/pts 2>/dev/null
 
+create_shared_dir() {
+    local owner="$1"
+    local mode="$2"
+    local path="$3"
+
+    mkdir -p "$path"
+    chown -hR "$owner" "$path" 2>/dev/null || chown -hR tesla:tesla "$path"
+    chmod "$mode" "$path"
+}
+
+start_service_supervisor() {
+    local name="$1"
+    local service="/etc/sv/$name"
+    local runsv_bin=""
+
+    [ -x "$service/run" ] || return 0
+    if [ -x /sbin/runsv ]; then
+        runsv_bin=/sbin/runsv
+    elif [ -x /usr/bin/runsv ]; then
+        runsv_bin=/usr/bin/runsv
+    else
+        echo "runit: runsv not found, not supervising $name"
+        return 0
+    fi
+
+    if pgrep -f "runsv $service" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "runit: starting supervisor for $name"
+    "$runsv_bin" "$service" &
+}
+
+# QtCar's stock /etc/sv/qtcar/run normally creates these before the UI starts.
+# In QEMU we launch QtCar directly, so prepare the app/runtime directories here.
+create_shared_dir "tesla:tesla" "0770" "/opt/games/run/tidk"
+create_shared_dir "tesla:tesla-apps" "0770" "/opt/games/run/tesla-apps"
+create_shared_dir "tesla:input-to-virtual" "0770" "/opt/games/run/i2v"
+create_shared_dir "tesla:gamepad-to-virtual" "0770" "/opt/games/run/g2v"
+create_shared_dir "tesla:tesla" "0770" "/var/lib/feature"
+create_shared_dir "tesla:video" "0770" "/var/run/video"
+create_shared_dir "tesla:tesla" "0700" "/var/run/notetaker"
+create_shared_dir "tesla:perf_monitor" "2770" "/var/run/perf"
+create_shared_dir "tesla:chromium-webapp-adapter" "0750" "/opt/games/var/tesla-chromium-webapp-adapter"
+rm -rf /run/chromium /run/chromium-app
+mkdir -p /run/chromium /run/chromium-app
+chown tesla:tesla /run/chromium /run/chromium-app
+chmod 0755 /run/chromium /run/chromium-app
+touch /var/run/test_id
+chown tesla:tesla /var/run/test_id
+chmod 0644 /var/run/test_id
+
+# QtCar asks escalator/runit to start external apps such as Chromium. Starting
+# these supervisors gives `sv` a supervise/ok file without booting all services.
+start_service_supervisor qtcar-startup
+start_service_supervisor escalator
+start_service_supervisor dbus-session-tesla
+start_service_supervisor chromium
+start_service_supervisor chromium-app
+start_service_supervisor chromium-adapter
+
 # Mount modloop to get Alpine kernel modules
 mkdir -p /.modloop
 mount -o loop /boot/modloop-lts /.modloop
@@ -117,10 +178,18 @@ fi
 /usr/bin/Xorg &
 export DISPLAY=:0
 
-# Wait for X to start
-sleep 2
+# Wait for X to start before asking it to change modes.
+for _i in 1 2 3 4 5 6 7 8 9 10; do
+    if xrandr >/tmp/xrandr.log 2>&1; then
+        break
+    fi
+    echo "Xorg: waiting for DISPLAY=$DISPLAY... ($_i/10)"
+    sleep 1
+done
 
-# Set resolution to 1920x1200 (Model 3 native)
-xrandr -s 1920x1200
+if ! xrandr -s 1920x1200; then
+    echo "Xorg: failed to set 1920x1200"
+    cat /tmp/xrandr.log 2>/dev/null
+fi
 
 /usr/sbin/sshd -f /etc/ssh/sshd_config_qemu &

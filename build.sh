@@ -1,7 +1,10 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 CONTAINER_IMAGE_PATH="./cache/ubuntu-xorg-rootfs/"
+DISK_MOUNT="./mnt/disk"
+SQUASHFS_MOUNT="./mnt/squashfs"
+ALPINE_ISO_MOUNT="./mnt/alpine-iso"
 
 
 function log(){
@@ -12,6 +15,24 @@ function err() {
     echo -e "\033[31m$1\033[0m" > /dev/stderr
     exit 1
 }
+
+function cleanup() {
+    local status=$?
+
+    if mountpoint -q "$ALPINE_ISO_MOUNT" 2>/dev/null; then
+        sudo umount "$ALPINE_ISO_MOUNT" || true
+    fi
+    if mountpoint -q "$DISK_MOUNT" 2>/dev/null; then
+        sudo umount "$DISK_MOUNT" || true
+    fi
+    if mountpoint -q "$SQUASHFS_MOUNT" 2>/dev/null; then
+        sudo umount "$SQUASHFS_MOUNT" || true
+    fi
+
+    exit "$status"
+}
+
+trap cleanup EXIT
 
 if [ $# -ne 1 ]; then
     err "Usage: $0 <input_file>"
@@ -34,6 +55,8 @@ fi
 
 log "Start build"
 
+mkdir -p out cache mnt
+
 qemu-img create out/boot.img 1G
 qemu-img create out/disk.img 6G
 
@@ -45,14 +68,14 @@ mkfs.ext4 ./out/disk.img
 
 log "Mount the disk image and squashfs"
 
-mkdir -p ./mnt/disk
-mkdir -p ./mnt/squashfs
+mkdir -p "$DISK_MOUNT"
+mkdir -p "$SQUASHFS_MOUNT"
 
-sudo mount ./out/disk.img ./mnt/disk
-sudo mount -t squashfs "$INPUT_FILE" ./mnt/squashfs
+sudo mount ./out/disk.img "$DISK_MOUNT"
+sudo mount -t squashfs "$INPUT_FILE" "$SQUASHFS_MOUNT"
 
 log "Copy files to disk image"
-sudo cp -R ./mnt/squashfs/* ./mnt/disk || true
+sudo cp -R "$SQUASHFS_MOUNT"/* "$DISK_MOUNT" || true
 
 if [ ! -d "$CONTAINER_IMAGE_PATH" ]; then
     log "Build X11 docker image"
@@ -204,21 +227,33 @@ log "Patch libQtCarUIFramework.so for touch input in QEMU"
 # 4. Patch ManagedQtCarTouchDriver::isDisplayOn() to always return true.
 #    At 0xaede20: → mov eax,1; ret (b8 01 00 00 00 c3)
 TOUCH_LIB="./mnt/disk/usr/tesla/UI/lib/libQtCarUIFramework.so"
-sudo python3 -c "
+sudo python3 - "$TOUCH_LIB" <<'PY'
+import sys
+
+path = sys.argv[1]
 patches = [
-    (0x89cef9, b'\x90\x90\x90\x90\x90\x90', 'NOP touch-skip jump in DisplayDevice ctor'),
-    (0x89cf28, b'\x4c\x89\xe7\xe8\xb0\x74\xc4\xff\x48\x93\x48\x8b\x3d\x87\xdb\x74\x00', 'call getInstance before loadTouchDriver'),
-    (0xaee050, b'\xb8\x01\x00\x00\x00\xc3', 'ManagedQtCarTouchDriver::isPowered() -> return true'),
-    (0xaede20, b'\xb8\x01\x00\x00\x00\xc3', 'ManagedQtCarTouchDriver::isDisplayOn() -> return true'),
+    (0x89cef9, bytes.fromhex('0f85f2090000'), bytes.fromhex('909090909090'), 'NOP touch-skip jump in DisplayDevice ctor'),
+    (0x89cf28, None, bytes.fromhex('4c89e7e8b074c4ff4893488b3d87db7400'), 'call getInstance before loadTouchDriver'),
+    (0xaee050, None, bytes.fromhex('b801000000c3'), 'ManagedQtCarTouchDriver::isPowered() -> return true'),
+    (0xaede20, None, bytes.fromhex('b801000000c3'), 'ManagedQtCarTouchDriver::isDisplayOn() -> return true'),
 ]
-with open('$TOUCH_LIB', 'r+b') as f:
-    for offset, patch, desc in patches:
+
+with open(path, 'r+b') as f:
+    for offset, expected, patch, desc in patches:
         f.seek(offset)
         orig = f.read(len(patch))
+        if orig == patch:
+            print(f'  {offset:#x}: already patched ({desc})')
+            continue
+        if expected is not None and orig != expected:
+            raise SystemExit(
+                f'{path}: unexpected bytes at {offset:#x}: '
+                f'{orig.hex()} != {expected.hex()} ({desc})'
+            )
         f.seek(offset)
         f.write(patch)
         print(f'  {offset:#x}: {orig.hex()} -> {patch.hex()}  ({desc})')
-"
+PY
 
 log "Patch libdrm.so.2: drmWaitVBlank -> return 0 (VirtIO GPU has no vblank)"
 # VirtIO GPU doesn't implement DRM_IOCTL_WAIT_VBLANK; every call returns ENOTSUP.
@@ -227,18 +262,30 @@ log "Patch libdrm.so.2: drmWaitVBlank -> return 0 (VirtIO GPU has no vblank)"
 # offset for this lib) to xor eax,eax / ret immediately after endbr64.
 #   0x97e4: 31 c0 c3  (xor eax,eax; ret)
 LIBDRM="./mnt/disk/usr/lib/libdrm.so.2"
-sudo python3 -c "
+sudo python3 - "$LIBDRM" <<'PY'
+import sys
+
+path = sys.argv[1]
 patches = [
-    (0x97e4, b'\x31\xc0\xc3', 'drmWaitVBlank -> xor eax,eax; ret'),
+    (0x97e4, None, bytes.fromhex('31c0c3'), 'drmWaitVBlank -> xor eax,eax; ret'),
 ]
-with open('$LIBDRM', 'r+b') as f:
-    for offset, patch, desc in patches:
+
+with open(path, 'r+b') as f:
+    for offset, expected, patch, desc in patches:
         f.seek(offset)
         orig = f.read(len(patch))
+        if orig == patch:
+            print(f'  {offset:#x}: already patched ({desc})')
+            continue
+        if expected is not None and orig != expected:
+            raise SystemExit(
+                f'{path}: unexpected bytes at {offset:#x}: '
+                f'{orig.hex()} != {expected.hex()} ({desc})'
+            )
         f.seek(offset)
         f.write(patch)
         print(f'  {offset:#x}: {orig.hex()} -> {patch.hex()}  ({desc})')
-"
+PY
 
 log "Copy input libraries (needed by Xorg libinput driver)"
 INPUT_LIBS=(
@@ -262,7 +309,7 @@ sudo cp -R ./rootfs/root/ ./mnt/disk/
 sudo cp -R ./rootfs/home/tesla ./mnt/disk/home/
 
 log "Remove Tesla Xorg config"
-sudo rm ./mnt/disk/etc/X11/xorg.conf.d/10-monitor.conf
+sudo rm -f ./mnt/disk/etc/X11/xorg.conf.d/10-monitor.conf
 
 log "Copy Xorg modesetting config"
 sudo cp ./rootfs/etc/X11/xorg.conf.d/10-modesetting.conf ./mnt/disk/etc/X11/xorg.conf.d/
@@ -290,11 +337,11 @@ if [ ! -d "$ALPINE_CACHE_DIR" ]; then
 
     log "Extract Alpine boot files"
     mkdir -p "$ALPINE_CACHE_DIR"
-    mkdir -p ./mnt/alpine-iso
-    sudo mount -o loop ./cache/alpine-standard.iso ./mnt/alpine-iso
-    sudo cp -R ./mnt/alpine-iso/* "$ALPINE_CACHE_DIR/"
-    sudo umount ./mnt/alpine-iso
-    rmdir ./mnt/alpine-iso
+    mkdir -p "$ALPINE_ISO_MOUNT"
+    sudo mount -o loop ./cache/alpine-standard.iso "$ALPINE_ISO_MOUNT"
+    sudo cp -R "$ALPINE_ISO_MOUNT"/* "$ALPINE_CACHE_DIR/"
+    sudo umount "$ALPINE_ISO_MOUNT"
+    rmdir "$ALPINE_ISO_MOUNT"
 fi
 
 log "Copy SSH host keys"
@@ -324,5 +371,5 @@ sudo cp -R ./cache/alpine-iso/boot/* ./mnt/disk/boot/
 
 log "DONE!"
 
-sudo umount ./mnt/disk
-sudo umount ./mnt/squashfs
+trap - EXIT
+cleanup

@@ -1,89 +1,96 @@
-# Telsa on QEMU
+# Tesla on QEMU
+
+Run Tesla's QtCar infotainment UI from a firmware squashfs image inside QEMU.
 
 ## Requirements
 
-- Linux
+- Linux with KVM available
 - QEMU
-- A Tesla firmware image (e.g: `./firmware/2024.20.9.mcu2` = `499b7435e36d18476647838f3d7fbac6`)
+- Docker
+- `qemu-img`, `mkfs.ext4`, `mkfs.exfat`, `wget`, `ssh-keygen`, `ssh-add`
+- A Tesla firmware squashfs image, for example `firmware/2026.2.3.model3.squashfs`
 
-## Setup
+The build script also uses `sudo` to mount disk images and copy files into the generated root filesystem.
 
-```bash
-sudo ip tuntap add dev tap0 mode tap
-sudo ip link set tap0 up
-sudo ip addr add 192.168.90.5/24 dev tap0
-```
+## Network Setup
 
-
-## Build QEMU image
+Create the tap interface used by QEMU:
 
 ```bash
-./build.sh firmware/2024.20.9.mcu2
+./create-tap.sh
 ```
 
-## Build the ramdisk
+The defaults are:
 
------ OUTDATED -----
-TODO: Update this section
+- Host tap device: `tap0`
+- Host IP: `192.168.90.5/24`
+- VM IP: `192.168.90.100`
 
-## Start
+You can override the host-side settings:
 
 ```bash
-./start.sh
+TAP=tap1 HOST_CIDR=192.168.91.5/24 ./create-tap.sh
 ```
 
-In another window, you can use SSH to connect to the VM:
+## Build The Disk Image
+
+```bash
+./build.sh firmware/2026.2.3.model3.squashfs
+```
+
+This creates `out/disk.img`, copies the Tesla root filesystem into it, adds Xorg/Mesa support, installs the input proxy helpers, applies the current QtCar/DRM patches, and caches Alpine boot files under `cache/alpine-iso`.
+
+The QtCar binary patches are firmware-specific. If a checked byte signature does not match, the build stops instead of silently patching an unknown binary.
+
+## Start The VM
+
+```bash
+./qemu/start.sh
+```
+
+Useful launch overrides:
+
+```bash
+RAM=4g SMP=4 RESOLUTION=1920x1200 TAP=tap0 ./qemu/start.sh
+```
+
+Supported environment variables:
+
+- `RAM`, default `2g`
+- `SMP`, default `2`
+- `DISK_IMG`, default `./out/disk.img`
+- `KERNEL`, default `./cache/alpine-iso/boot/vmlinuz-lts`
+- `INITRD`, default `./cache/alpine-iso/boot/initramfs-lts`
+- `TAP`, default `tap0`
+- `RESOLUTION`, default `1920x1200`
+- `DISPLAY_BACKEND`, default `gtk,gl=on`
+
+## Start Services In The VM
+
+The VM boots with `init=/bin/bash`. From the QEMU serial console, start networking, device setup, Xorg, the input proxy, and sshd:
+
+```bash
+/root/start.sh
+```
+
+From another terminal, connect over SSH:
 
 ```bash
 ssh root@192.168.90.100
 ```
 
-Password for root is... `root`.
-
-## Starting the UI
-
-Now that you have access to your VM, you can send the scripts to it:
+Then start QtCar as the `tesla` user:
 
 ```bash
-scp -r ./scripts root@192.168.90.100:/root
+/root/start-qtcar.sh
 ```
 
-In the QEMU terminal, you can start X:
-
-```bash
-/root/scripts/start-x.sh
-```
-
-### Starting QtCar
-
-> [!WARNING]  
-> This will start QtCar as root. It's probably a better idea to copy the script to `/home/tesla/` and then `sudo -u tesla /home/tesla/start-qtcar.sh` to run it.
-
-Via SSH, you can run the script to start QtCar:
-
-```bash
-/root/scripts/start-qcar.sh
-```
-
-If everything works well, you should see the QtCar UI:
+If everything works, the QtCar UI should appear:
 
 ![QtCar UI](./docs/qtcar.jpg)
 
+## Notes
 
-## Known Issues
-
-### Touch doesn't work
-
-It is currently not possible to interact with the UI from the QEMU window. The UI is running
-and answers to the server command (e.g: displaying a message window) - but it cannot currently
-be interacted with.
-
-It looks like the UI uses a custom input device driver (not relying directly on evdev) that
-is part of the kernel (`tesla-uinput`?).
-
-
-### UI looks odd
-
-Since pretty much none of the other services are started, the UI doesn't show the car graphics,
-or the map, or the E112 UI. This is normal and simply means that we have to integrate / start
-those services to have a fully working UI.
+- Touch input is handled through `x11-input-proxy`, which maps the QEMU USB tablet into X11 clicks and a uinput multitouch device exposed as `/dev/input/touch`.
+- QtCar is still missing many surrounding Tesla services, so car graphics, maps, emergency-call UI, and other service-backed features may be absent or incomplete.
+- The current image setup uses permissive device permissions inside the VM for convenience. Treat the VM image as a local development artifact.
